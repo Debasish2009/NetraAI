@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>NETRA AI Assistant</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22none%22 stroke=%22%23BB86FC%22 stroke-width=%225%22/><circle cx=%2250%22 cy=%2250%22 r=%2220%22 fill=%22%2303DAC6%22/></svg>">
+    
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- TensorFlow.js & COCO-SSD Model -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@latest/dist/coco-ssd.min.js"></script>
+
+    <!-- Tesseract.js for OCR -->
+    <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
+
+    <style>
+        :root {
+            --background-start: #0D0F1A;
+            --background-end: #040408;
+            --surface-color-alpha: rgba(20, 20, 35, 0.7);
+            --glass-border: rgba(187, 134, 252, 0.2);
+            --primary-glow: #BB86FC;
+            --secondary-glow: #03DAC6;
+            --warning-glow: #FFD700;
+            --info-glow: #3498DB;
+            --text-primary: #F0F0F0;
+            --text-secondary: #A0A0B0;
+            --error-color: #CF6679;
+            --font-main: 'Inter', sans-serif;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: var(--font-main);
+            background: linear-gradient(145deg, var(--background-start), var(--background-end));
+            color: var(--text-primary);
+        }
+
+        #app-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- Advanced Loader --- */
+        #loader-container {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: var(--background-end);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            transition: opacity 1s ease-out, backdrop-filter 1s ease-out;
+            opacity: 1;
+        }
+
+        #netra-logo {
+            width: 150px;
+            height: 150px;
+            position: relative;
+            filter: drop-shadow(0 0 15px var(--primary-glow));
+        }
+
+        .ring {
+            position: absolute;
+            width: 100%; height: 100%;
+            border: 3px solid transparent;
+            border-radius: 50%;
+            animation: rotate 6s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
+        }
+        .ring:nth-child(1) { border-top-color: var(--primary-glow); animation-duration: 4s; }
+        .ring:nth-child(2) { border-bottom-color: var(--secondary-glow); animation-duration: 4s; animation-direction: reverse; }
+        .ring:nth-child(3) { border-right-color: var(--primary-glow); animation-duration: 5s; }
+        .ring:nth-child(4) { border-left-color: var(--secondary-glow); animation-duration: 5s; animation-direction: reverse; }
+
+        #logo-core {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 30%; height: 30%;
+            background: radial-gradient(circle, var(--secondary-glow) 0%, var(--primary-glow) 100%);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 35px var(--secondary-glow), 0 0 50px var(--primary-glow);
+            animation: core-pulse 2.5s infinite ease-in-out;
+        }
+
+        #loading-text {
+            margin-top: 3rem;
+            font-size: 1.2rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 1px;
+            animation: text-pulse 2.5s infinite ease-in-out;
+            text-align: center;
+            padding: 0 1rem;
+        }
+        #loading-text.error {
+            color: var(--error-color);
+            animation: none;
+        }
+
+        @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes core-pulse { 0%, 100% { transform: translate(-50%,-50%) scale(1); } 50% { transform: translate(-50%,-50%) scale(0.9); } }
+        @keyframes text-pulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
+
+        /* --- Main UI --- */
+        #vision-container {
+            flex-grow: 1;
+            position: relative;
+            background-color: #000; /* CRUCIAL: Black background if video fails */
+            overflow: hidden;
+        }
+        #camera-feed, #detection-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+        #detection-canvas { z-index: 10; }
+        
+        #top-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            padding: 1.5rem;
+            box-sizing: border-box;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+            z-index: 15;
+            color: #fff;
+            text-shadow: 0 2px 5px rgba(0,0,0,0.5);
+            pointer-events: none;
+        }
+        #datetime {
+            text-align: right;
+        }
+        #time { font-size: 1.5rem; font-weight: 600; }
+        #date { font-size: 0.9rem; font-weight: 400; color: var(--text-secondary); }
+        
+        #center-reticle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 50px;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            transition: all 0.3s ease;
+        }
+        
+        #center-reticle.active {
+            border-color: var(--secondary-glow);
+            transform: translate(-50%, -50%) scale(1.2);
+            box-shadow: 0 0 15px var(--secondary-glow);
+        }
+
+        /* --- Detections Panel --- */
+        #detections-panel {
+            flex-shrink: 0;
+            height: 40%;
+            background-color: var(--surface-color-alpha);
+            backdrop-filter: blur(15px) saturate(150%);
+            -webkit-backdrop-filter: blur(15px) saturate(150%);
+            border-top: 1px solid var(--glass-border);
+            box-shadow: 0 -15px 40px rgba(0,0,0,0.4);
+            padding: 1.5rem;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+            z-index: 20;
+        }
+
+        #panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        #panel-title {
+            margin: 0;
+            font-size: 1.2rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        
+        #mic-icon {
+            width: 32px;
+            height: 32px;
+            transition: all 0.3s ease;
+            filter: drop-shadow(0 0 5px var(--text-secondary));
+        }
+        #mic-icon.listening {
+             filter: drop-shadow(0 0 10px var(--secondary-glow));
+             transform: scale(1.1);
+        }
+        #mic-icon .glow {
+            fill: var(--text-secondary);
+            animation: mic-glow-off 1s forwards;
+        }
+        #mic-icon.listening .glow {
+            fill: url(#mic-gradient);
+            animation: mic-glow-on 1s forwards;
+        }
+
+        #hint-text {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            font-style: italic;
+            transition: opacity 0.5s ease;
+        }
+
+        @keyframes mic-glow-on { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes mic-glow-off { from { opacity: 1; } to { opacity: 0; } }
+        
+        #results-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column-reverse; /* New results appear at the top */
+            gap: 0.75rem;
+            scrollbar-width: thin;
+            scrollbar-color: var(--primary-glow) transparent;
+        }
+
+        .detection-card {
+            background: rgba(0,0,0,0.2);
+            border-left: 4px solid;
+            border-radius: 0 8px 8px 0;
+            padding: 1rem 1.2rem;
+            font-size: 1.05rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 1.2rem;
+            opacity: 0;
+            transform: scale(0.95);
+            animation: popIn 0.5s forwards cubic-bezier(0.18, 0.89, 0.32, 1.28);
+        }
+        
+        .detection-card.currency { border-color: var(--primary-glow); }
+        .detection-card.text { border-color: var(--secondary-glow); }
+        .detection-card.object { border-color: #61A3FF; }
+        .detection-card.navigation { border-color: var(--warning-glow); }
+        .detection-card.info { border-color: var(--info-glow); }
+        .detection-card .icon { font-size: 1.6rem; }
+        
+        @keyframes popIn { to { opacity: 1; transform: scale(1); } }
+
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        
+        <div id="loader-container">
+            <div id="netra-logo">
+                <div class="ring"></div>
+                <div class="ring"></div>
+                <div class="ring"></div>
+                <div class="ring"></div>
+                <div id="logo-core"></div>
+            </div>
+            <p id="loading-text">Initializing NETRA Core...</p>
+        </div>
+        
+        <div id="vision-container">
+            <div id="center-reticle"></div>
+            <div id="top-overlay">
+                <div id="datetime">
+                    <div id="time"></div>
+                    <div id="date"></div>
+                </div>
+            </div>
+            <video id="camera-feed" autoplay playsinline muted></video>
+            <canvas id="detection-canvas"></canvas>
+        </div>
+        
+        <div id="detections-panel">
+            <div id="panel-header">
+                <h2 id="panel-title">
+                     <svg id="mic-icon" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <radialGradient id="mic-gradient" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+                                <stop offset="0%" style="stop-color: var(--secondary-glow); stop-opacity:1"/>
+                                <stop offset="100%" style="stop-color: var(--primary-glow); stop-opacity:1"/>
+                            </radialGradient>
+                            <filter id="glow">
+                                <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur"/>
+                                    <feMergeNode in="SourceGraphic"/>
+                                </feMerge>
+                            </filter>
+                        </defs>
+                        <circle class="glow" cx="16" cy="16" r="16" filter="url(#glow)"/>
+                        <path fill="#1A1A2A" d="M16 22.5c2.48 0 4.5-2.02 4.5-4.5V9.5c0-2.48-2.02-4.5-4.5-4.5S11.5 7.02 11.5 9.5v8.5c0 2.48 2.02 4.5 4.5 4.5zM24 18c0 4.41-3.59 8-8 8s-8-3.59-8-8H6c0 5.52 4.48 10 10 10s10-4.48 10-10h-2z"/>
+                    </svg>
+                    <span id="status-text">Connecting...</span>
+                </h2>
+                <span id="hint-text"></span>
+            </div>
+            <div id="results-container"></div>
+        </div>
+
+    </div>
+
+    <script>
+        // DOM Elements
+        const video = document.getElementById('camera-feed');
+        const canvas = document.getElementById('detection-canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const loaderContainer = document.getElementById('loader-container');
+        const loadingText = document.getElementById('loading-text');
+        const resultsContainer = document.getElementById('results-container');
+        const statusText = document.getElementById('status-text');
+        const micIcon = document.getElementById('mic-icon');
+        const hintText = document.getElementById('hint-text');
+        const timeEl = document.getElementById('time');
+        const dateEl = document.getElementById('date');
+        const centerReticle = document.getElementById('center-reticle');
+
+        // AI & State
+        let objectDetector, tesseractWorker, recognition;
+        let isProcessing = false;
+        let navigationAidActive = false;
+        let lastNavSpeechTime = 0;
+        let aiVoice = null; // To store the selected high-quality voice
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const objectColors = {};
+
+        const HINTS = [
+            "Ask: 'Describe the scene'",
+            "Ask: 'What color is this?'",
+            "Say: 'Guide me' to toggle navigation",
+            "Say: 'Read this text'",
+            "Say: 'How much money is this?'",
+            "Ask: 'What's the weather like?'",
+            "Ask: 'What is my battery level?'",
+        ];
+        let hintInterval;
+
+        // --- Main Initialization ---
+        window.addEventListener('load', async () => {
+            try {
+                updateDateTime();
+                setInterval(updateDateTime, 1000);
+                
+                initSpeechSynthesis(); // Initialize the voice engine
+
+                await initCamera();
+                setLoadingText("Waking AI models...");
+                [objectDetector, tesseractWorker] = await Promise.all([
+                    cocoSsd.load(),
+                    Tesseract.createWorker('eng', 1, { logger: m => console.log(m) })
+                ]);
+                initSpeechRecognition();
+                
+                speak("NETRA AI is online and ready.");
+                setStatusText("NETRA is listening");
+                loaderContainer.style.opacity = '0';
+                setTimeout(() => loaderContainer.style.display = 'none', 1000);
+                
+                runDetectionLoop();
+                startHintCycle();
+            } catch (err) {
+                console.error("Initialization Error:", err);
+                const errorMsg = `Initialization failed: ${err.message}. Please grant camera permissions and refresh.`;
+                setLoadingText(errorMsg, true);
+                speak(errorMsg);
+            }
+        });
+        
+        async function runDetectionLoop() {
+            // Check if video is ready and playing
+            if (objectDetector && !isProcessing && video.readyState >= 3 && !video.paused) {
+                const predictions = await objectDetector.detect(video);
+                
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                predictions.forEach(p => drawBoundingBox(p));
+
+                if (navigationAidActive) {
+                    provideNavigationalAid(predictions);
+                }
+            }
+            requestAnimationFrame(runDetectionLoop);
+        }
+        
+        function initSpeechRecognition() {
+            if (!SpeechRecognition) {
+                setStatusText("Voice control unsupported.");
+                speak("Sorry, your browser does not support voice control.");
+                return;
+            }
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = false;
+            recognition.lang = 'en-IN';
+            recognition.onstart = () => micIcon.classList.add('listening');
+            recognition.onend = () => {
+                micIcon.classList.remove('listening');
+                if (!isProcessing) recognition.start();
+            };
+            recognition.onerror = (e) => console.error('Speech recognition error:', e.error);
+            recognition.onresult = handleVoiceCommand;
+            recognition.start();
+        }
+        
+        function handleVoiceCommand(event) {
+            const command = event.results[event.results.length - 1][0].transcript.toLowerCase().trim();
+            console.log('Command received:', command);
+            if (isProcessing) return;
+            
+            if (command.includes('guide') || command.includes('navigation')) {
+                 navigationAidActive = !navigationAidActive;
+                 const status = navigationAidActive ? "Navigation guidance activated." : "Navigation guidance deactivated.";
+                 speak(status);
+                 addResultCard('navigation', status, '🧭');
+            }
+            else if (command.includes('read') || command.includes('what does this say')) handleReadText();
+            else if (command.includes('money') || command.includes('currency')) handleDetectCurrency();
+            else if (command.includes('what is this') || command.includes('identify')) speakCurrentDetections();
+            else if (command.includes('time') || command.includes('date') || command.includes('day')) handleGetTime();
+            else if (command.includes('weather')) handleGetWeather();
+            else if (command.includes('battery') || command.includes('power')) handleGetBattery();
+            else if (command.includes('color') || command.includes('colour')) handleGetColor();
+            else if (command.includes('describe the scene')) handleDescribeScene();
+        }
+        
+        async function handleReadText() {
+            setProcessingState(true, "Scanning for text...");
+            try {
+                const { data: { text } } = await tesseractWorker.recognize(captureFrame());
+                const cleanText = text.trim().replace(/\s+/g, ' ');
+                const speech = cleanText ? `I have found some text. It says: ${cleanText}` : "I looked, but I could not find any clear text.";
+                speak(speech);
+                if (cleanText) addResultCard('text', `"${cleanText}"`, '✍️');
+            } catch (error) {
+                console.error("OCR Error:", error);
+                speak("My apologies, an error occurred while trying to read text.");
+            } finally {
+                setProcessingState(false);
+            }
+        }
+
+        async function handleDetectCurrency() {
+            setProcessingState(true, "Analyzing for currency...");
+            const predictions = await objectDetector.detect(video);
+            let totalValue = 0;
+            const foundItems = new Map();
+
+            for (const p of predictions) {
+                const { bbox, class: pClass } = p;
+                const [x, y, w, h] = bbox;
+                const aspectRatio = w / h;
+
+                // Heuristic for notes
+                if ((pClass === 'book' || pClass === 'remote' || pClass === 'cell phone') && aspectRatio > 1.5 && aspectRatio < 2.8) {
+                    const note = await getInrNoteAdvanced(bbox);
+                    if (note) {
+                        totalValue += note.value;
+                        foundItems.set(note.name, (foundItems.get(note.name) || 0) + 1);
+                        continue;
+                    }
+                }
+                
+                // Heuristic for coins
+                if ((pClass === 'donut' || pClass === 'clock' || pClass === 'stop sign') && aspectRatio > 0.8 && aspectRatio < 1.2) {
+                    const coin = getInrCoin(w, video.videoWidth);
+                    if (coin) {
+                        totalValue += coin.value;
+                        foundItems.set(coin.name, (foundItems.get(coin.name) || 0) + 1);
+                    }
+                }
+            }
+
+            let speech;
+            if (totalValue > 0) {
+                const summary = Array.from(foundItems.entries()).map(([name, count]) => `${count} ${name}${count > 1 ? 's' : ''}`).join(', ');
+                speech = `I can see a total of ${totalValue} Rupees, composed of ${summary}.`;
+                addResultCard('currency', `Total: ₹${totalValue} (${summary})`, '₹');
+            } else {
+                speech = "I have looked for currency but could not identify any clearly.";
+            }
+            speak(speech);
+            setProcessingState(false);
+        }
+        
+        async function speakCurrentDetections() {
+            const predictions = await objectDetector.detect(video);
+            if (predictions.length === 0) {
+                speak("I do not see any recognizable objects right now.");
+                return;
+            }
+            
+            const counts = predictions.reduce((acc, p) => { acc[p.class] = (acc[p.class] || 0) + 1; return acc; }, {});
+            let summary = "I can see ";
+            const entries = Object.entries(counts);
+            entries.forEach(([name, count], index) => {
+                summary += `${count} ${name}${count > 1 ? 's' : ''}`;
+                if (index < entries.length - 2) summary += ", ";
+                else if (index === entries.length - 2) summary += " and ";
+            });
+            speak(summary);
+            addResultCard('object', summary, '👀');
+        }
+        
+        function provideNavigationalAid(predictions) {
+            const now = Date.now();
+            if (now - lastNavSpeechTime < 4000) return; // Increased cooldown
+
+            const viewWidth = canvas.width;
+            const dangerZoneArea = (viewWidth * canvas.height) * 0.20; // larger area for "close"
+            const centerZone = {
+                min: viewWidth * 0.35,
+                max: viewWidth * 0.65
+            };
+
+            const obstacles = predictions.map(p => ({
+                ...p,
+                area: p.bbox[2] * p.bbox[3],
+                centerX: p.bbox[0] + p.bbox[2] / 2
+            })).sort((a,b) => b.area - a.area); // Sort by largest area (closest)
+
+            if(obstacles.length === 0) return;
+            
+            const closestObstacle = obstacles[0];
+
+            if (closestObstacle.area > dangerZoneArea) {
+                 const speech = `Warning. Large ${closestObstacle.class} directly ahead.`;
+                 speak(speech);
+                 addResultCard('navigation', `IMMINENT: ${closestObstacle.class} ahead`, '⚠️');
+                 lastNavSpeechTime = now;
+            } else if (closestObstacle.centerX > centerZone.min && closestObstacle.centerX < centerZone.max) {
+                 const distance = Math.round((1 - Math.sqrt(closestObstacle.area / (viewWidth * canvas.height))) * 10); // Simple distance estimation in meters
+                 const speech = `${closestObstacle.class} ahead, approximately ${distance} meters away.`;
+                 speak(speech);
+                 addResultCard('navigation', `${closestObstacle.class} ahead (~${distance}m)`, '⚠️');
+                 lastNavSpeechTime = now;
+            }
+        }
+        
+        // --- NEW COMMAND HANDLERS ---
+        
+        function handleGetTime() {
+             const now = new Date();
+             const timeString = now.toLocaleTimeString('en-IN', { hour: 'numeric', minute: 'numeric', hour12: true });
+             const dateString = now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });
+             const speech = `The current time is ${timeString} on ${dateString}.`;
+             speak(speech);
+             addResultCard('info', speech, '🕒');
+        }
+
+        async function handleGetWeather() {
+            setProcessingState(true, "Fetching weather data...");
+            // Free public weather API - no key needed. Based in Delhi as a default.
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=28.61&longitude=77.23&current_weather=true`;
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
+                const data = await response.json();
+                const temp = data.current_weather.temperature;
+                const code = data.current_weather.weathercode;
+                const weatherDesc = getWeatherDescription(code);
+                const speech = `The current weather is ${weatherDesc} with a temperature of ${temp} degrees Celsius.`;
+                speak(speech);
+                addResultCard('info', `Weather: ${temp}°C, ${weatherDesc}`, '🌦️');
+            } catch (error) {
+                console.error("Weather fetch error:", error);
+                speak("I was unable to fetch the current weather information.");
+            } finally {
+                setProcessingState(false);
+            }
+        }
+
+        async function handleGetBattery() {
+            if (navigator.getBattery) {
+                const battery = await navigator.getBattery();
+                const level = Math.floor(battery.level * 100);
+                const charging = battery.charging ? "and it is currently charging." : "and it is not charging.";
+                const speech = `Your device battery is at ${level} percent, ${charging}`;
+                speak(speech);
+                addResultCard('info', `Battery: ${level}% ${battery.charging ? '(Charging)' : ''}`, '🔋');
+            } else {
+                speak("My apologies, I cannot access battery information on this device.");
+                addResultCard('info', 'Battery API not supported on this device.', '🔋');
+            }
+        }
+        
+        async function handleGetColor() {
+            setProcessingState(true, "Analyzing the color...");
+            centerReticle.classList.add('active');
+            
+            const [x,y,w,h] = [canvas.width/2 - 25, canvas.height/2 - 25, 50, 50];
+            const tempCanvas = captureFrame();
+            const tempCtx = tempCanvas.getContext('2d');
+            const imageData = tempCtx.getImageData(x, y, w, h);
+            const dominantColor = getDominantColor(imageData.data);
+            const colorName = await getColorName(dominantColor.r, dominantColor.g, dominantColor.b);
+
+            const speech = `The dominant color in the center is ${colorName}.`;
+            speak(speech);
+            addResultCard('info', `Center Color: ${colorName}`, '🎨');
+
+            setTimeout(() => centerReticle.classList.remove('active'), 1000);
+            setProcessingState(false);
+        }
+
+        async function handleDescribeScene() {
+            setProcessingState(true, "Describing the scene...");
+            const predictions = await objectDetector.detect(video);
+            if (predictions.length === 0) {
+                speak("The scene appears to be empty.");
+                setProcessingState(false);
+                return;
+            }
+
+            predictions.sort((a,b) => (b.bbox[2] * b.bbox[3]) - (a.bbox[2] * a.bbox[3]));
+
+            let description = "In front of you, ";
+            const positions = [];
+            const viewWidth = canvas.width;
+
+            predictions.forEach(p => {
+                const centerX = p.bbox[0] + p.bbox[2] / 2;
+                let position;
+                if (centerX < viewWidth * 0.33) {
+                    position = "on the left";
+                } else if (centerX > viewWidth * 0.66) {
+                    position = "on the right";
+                } else {
+                    position = "in the center";
+                }
+                positions.push(`there is a ${p.class} ${position}`);
+            });
+            
+            if (positions.length > 1) {
+                 const last = positions.pop();
+                 description += positions.join(', ') + `, and ${last}`;
+            } else {
+                description += positions[0];
+            }
+            
+            description += ".";
+            
+            speak(description);
+            addResultCard('object', description, '🗺️');
+            setProcessingState(false);
+        }
+
+        // --- UI & Utility Functions ---
+
+        function setLoadingText(text, isError = false) {
+            loadingText.textContent = text;
+            if (isError) loadingText.classList.add('error');
+            else loadingText.classList.remove('error');
+        }
+
+        async function initCamera() {
+            setLoadingText("Requesting camera access...");
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('Camera not supported by this browser.');
+            }
+
+            let stream;
+            const videoConstraints = { video: { facingMode: 'environment' } };
+
+            try {
+                console.log("Attempting to get environment (rear) camera...");
+                stream = await navigator.mediaDevices.getUserMedia(videoConstraints);
+            } catch (err) {
+                console.warn("Could not get environment camera, trying default camera.", err);
+                const fallbackConstraints = { video: true };
+                stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+            }
+
+            video.srcObject = stream;
+            
+            video.onloadedmetadata = () => {
+                console.log("Video metadata loaded, attempting to play...");
+                video.play().catch(e => {
+                    console.error("Video play failed:", e);
+                    speak("Error: Could not play the video stream.");
+                });
+            };
+            
+            return new Promise((resolve, reject) => {
+                const waitTimeout = setTimeout(() => reject(new Error("Camera stream timed out.")), 5000);
+                video.oncanplay = () => {
+                    console.log("Camera is ready to play.");
+                    clearTimeout(waitTimeout);
+                    resolve();
+                };
+            });
+        }
+
+        function drawBoundingBox(p) {
+            const [x, y, width, height] = p.bbox;
+
+            if (!objectColors[p.class]) {
+                const r = Math.floor(Math.random() * 200 + 55);
+                const g = Math.floor(Math.random() * 200 + 55);
+                const b = Math.floor(Math.random() * 200 + 55);
+                objectColors[p.class] = `rgb(${r},${g},${b})`;
+            }
+            const color = objectColors[p.class];
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.rect(x, y, width, height);
+            ctx.stroke();
+
+            const text = `${p.class} (${Math.round(p.score * 100)}%)`;
+            ctx.fillStyle = color;
+            ctx.font = '18px Inter';
+            const textWidth = ctx.measureText(text).width;
+            const textHeight = 18;
+
+            const labelY = y - (textHeight + 5);
+            ctx.fillRect(x, labelY > 0 ? labelY : y, textWidth + 10, textHeight + 5);
+
+            ctx.fillStyle = '#000000';
+            ctx.fillText(text, x + 5, labelY > 0 ? y - 5 : y + textHeight);
+        }
+
+        function addResultCard(type, text, icon) {
+            const card = document.createElement('div');
+            card.className = `detection-card ${type}`;
+            card.innerHTML = `<span class="icon">${icon}</span><span>${text}</span>`;
+            resultsContainer.prepend(card);
+        }
+        
+        function setStatusText(text) { statusText.textContent = text; }
+
+        function startHintCycle() {
+            hintText.style.opacity = '0';
+            setTimeout(() => {
+                 let hintIndex = 0;
+                 hintText.textContent = HINTS[hintIndex];
+                 hintText.style.opacity = '1';
+                 hintInterval = setInterval(() => {
+                    hintText.style.opacity = '0';
+                    setTimeout(() => {
+                        hintIndex = (hintIndex + 1) % HINTS.length;
+                        hintText.textContent = HINTS[hintIndex];
+                        hintText.style.opacity = '1';
+                    }, 500);
+                 }, 5000);
+            }, 1000);
+        }
+
+        function updateDateTime() {
+            const now = new Date();
+            timeEl.textContent = now.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+            dateEl.textContent = now.toLocaleDateString('en-IN', { weekday: 'long', month: 'short', day: 'numeric' });
+        }
+        
+        // --- Enhanced Speech Synthesis ---
+        function initSpeechSynthesis() {
+            const loadVoices = () => {
+                const voices = speechSynthesis.getVoices();
+                if (voices.length > 0) {
+                    // Prioritize high-quality voices
+                    aiVoice = voices.find(v => v.name === 'Google US English') ||
+                              voices.find(v => v.name === 'Microsoft David Desktop - English (United States)') ||
+                              voices.find(v => v.lang === 'en-IN' && v.name.includes('Google')) ||
+                              voices.find(v => v.lang.startsWith('en-')) ||
+                              null;
+                    console.log("Selected AI Voice:", aiVoice ? aiVoice.name : "Default");
+                }
+            };
+
+            if (speechSynthesis.onvoiceschanged !== undefined) {
+                speechSynthesis.onvoiceschanged = loadVoices;
+            }
+            loadVoices(); // Initial attempt
+        }
+
+        function speak(text) {
+            if (!('speechSynthesis' in window)) return;
+            speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            
+            if (aiVoice) {
+                utterance.voice = aiVoice;
+            }
+            utterance.lang = 'en-IN';
+            utterance.pitch = 1.0; // Clear, neutral pitch
+            utterance.rate = 0.95; // Slightly slower for clarity
+            
+            speechSynthesis.speak(utterance);
+        }
+
+        function setProcessingState(state, message = "") {
+            isProcessing = state;
+            if (state) {
+                recognition?.stop();
+                setStatusText(message);
+                micIcon.classList.remove('listening');
+                clearInterval(hintInterval);
+                hintText.style.opacity = '0';
+                speak(message);
+            } else {
+                recognition?.start();
+                setStatusText("NETRA is listening");
+                startHintCycle();
+            }
+        }
+
+        function captureFrame() {
+            const c = document.createElement('canvas');
+            c.width = video.videoWidth;
+            c.height = video.videoHeight;
+            c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+            return c;
+        }
+
+        // --- ADVANCED DETECTION LOGIC ---
+        const INR_NOTES_ADVANCED = [
+            { name: "10 Rupee Note", value: 10, color: { r: 139, g: 69, b: 19 } },
+            { name: "20 Rupee Note", value: 20, color: { r: 124, g: 252, b: 0 } },
+            { name: "50 Rupee Note", value: 50, color: { r: 0, g: 191, b: 255 } },
+            { name: "100 Rupee Note", value: 100, color: { r: 153, g: 50, b: 204 } },
+            { name: "200 Rupee Note", value: 200, color: { r: 255, g: 165, b: 0 } },
+            { name: "500 Rupee Note", value: 500, color: { r: 128, g: 128, b: 128 } }
+        ];
+        
+        async function getInrNoteAdvanced(bbox) {
+            const tempCanvas = captureFrame();
+            const tempCtx = tempCanvas.getContext('2d');
+            const [x, y, w, h] = bbox.map(Math.round);
+            if (w <= 0 || h <= 0) return null;
+            const imageData = tempCtx.getImageData(x, y, w, h);
+            
+            const dominantColor = getDominantColor(imageData.data);
+            if (!dominantColor) return null;
+
+            let closestNote = null;
+            let minDistance = Infinity;
+
+            INR_NOTES_ADVANCED.forEach(note => {
+                const dist = colorDistance(dominantColor, note.color);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    closestNote = note;
+                }
+            });
+
+            return minDistance < 80 ? closestNote : null;
+        }
+        
+        function colorDistance(c1, c2) {
+            return Math.sqrt(Math.pow(c1.r - c2.r, 2) + Math.pow(c1.g - c2.g, 2) + Math.pow(c1.b - c2.b, 2));
+        }
+
+        function getInrCoin(pixelWidth, videoWidth) {
+            const relativeSize = pixelWidth / videoWidth;
+            if (relativeSize > 0.1 && relativeSize < 0.18) return { name: "10 Rupee Coin", value: 10 };
+            if (relativeSize > 0.08 && relativeSize < 0.15) return { name: "5 Rupee Coin", value: 5 };
+            if (relativeSize > 0.06 && relativeSize < 0.12) return { name: "2 Rupee Coin", value: 2 };
+            if (relativeSize > 0.05 && relativeSize < 0.1) return { name: "1 Rupee Coin", value: 1 };
+            return null;
+        }
+
+        function getWeatherDescription(code) {
+            const codes = {
+                0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+                45: "Fog", 48: "Depositing rime fog", 51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
+                56: "Light freezing drizzle", 57: "Dense freezing drizzle", 61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
+                66: "Light freezing rain", 67: "Heavy freezing rain", 71: "Slight snow fall", 73: "Moderate snow fall", 75: "Heavy snow fall",
+                77: "Snow grains", 80: "Slight rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
+                85: "Slight snow showers", 86: "Heavy snow showers", 95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail"
+            };
+            return codes[code] || "Unknown weather";
+        }
+        
+        function getDominantColor(data) {
+            const colorCount = {}; let maxCount = 0; let dominantColor = null;
+            for (let i = 0; i < data.length; i += 16) {
+                const r = data[i]; const g = data[i+1]; const b = data[i+2];
+                if (r < 20 && g < 20 && b < 20 || r > 230 && g > 230 && b > 230) continue;
+                const key = `${r},${g},${b}`;
+                colorCount[key] = (colorCount[key] || 0) + 1;
+                if (colorCount[key] > maxCount) {
+                    maxCount = colorCount[key];
+                    dominantColor = { r, g, b };
+                }
+            }
+            return dominantColor;
+        }
+
+        async function getColorName(r, g, b) {
+            try {
+                const response = await fetch(`https://www.thecolorapi.com/id?rgb=${r},${g},${b}`);
+                const data = await response.json();
+                return data.name.value;
+            } catch (error) {
+                console.error("Color API error:", error);
+                return "an unknown color";
+            }
+        }
+    </script>
+</body>
+</html>
